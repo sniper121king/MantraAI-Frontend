@@ -113,8 +113,8 @@ const ChatApp = () => {
           onChange={(e) => setSelectedModel(e.target.value)}
           className="px-4 py-2 bg-slate-700 text-white rounded-lg border border-slate-600 focus:outline-none focus:ring-2 focus:ring-blue-500 cursor-pointer hover:bg-slate-600 transition"
         >
-          <<option value="gpt4">🟢 GPT-4</option>
-<option value="gemini">🟡 Gemini</option>
+          <option value="gpt4">🟢 GPT-4</option>
+  <option value="gemini">🟡 Gemini</option>
 <option value="cohere">🔴 Cohere</option>
         </select>
 
