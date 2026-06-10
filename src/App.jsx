@@ -1,76 +1,125 @@
-// Complete React Chat Component
 import React, { useState, useEffect, useRef } from 'react';
 import io from 'socket.io-client';
 import axios from 'axios';
+
+// HARDCODED BACKEND URL - This is the fix!
+const BACKEND_URL = 'https://mantraai-backend.onrender.com';
 
 const ChatApp = () => {
   const [messages, setMessages] = useState([]);
   const [input, setInput] = useState('');
   const [conversationId, setConversationId] = useState(null);
-  const [selectedModel, setSelectedModel] = useState('claude');
+  const [selectedModel, setSelectedModel] = useState('gpt4');
   const [loading, setLoading] = useState(false);
   const [userId, setUserId] = useState(null);
+  const [name, setName] = useState('');
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
   const messagesEndRef = useRef(null);
   const socketRef = useRef(null);
 
-  // Initialize socket connection
   useEffect(() => {
-    socketRef.current = io('http://localhost:5000');
+    if (userId) {
+      socketRef.current = io(BACKEND_URL, {
+        reconnection: true,
+        reconnectionDelay: 1000,
+        reconnectionDelayMax: 5000,
+        reconnectionAttempts: 5
+      });
 
-    socketRef.current.on('message_response', (data) => {
-      setMessages(prev => [
-        ...prev,
-        { role: 'user', content: data.userMessage.content, id: data.userMessage._id },
-        { role: 'assistant', content: data.aiMessage.content, id: data.aiMessage._id, model: selectedModel }
-      ]);
-      setLoading(false);
-    });
+      socketRef.current.on('connect', () => {
+        console.log('Connected to backend');
+      });
 
-    socketRef.current.on('error', (error) => {
-      console.error('Socket error:', error);
-      setLoading(false);
-    });
+      socketRef.current.on('message_response', (data) => {
+        setMessages(prev => [
+          ...prev,
+          { role: 'user', content: data.userMsg.content, id: data.userMsg._id },
+          { role: 'assistant', content: data.aiMsg.content, id: data.aiMsg._id, model: selectedModel }
+        ]);
+        setLoading(false);
+      });
 
-    return () => socketRef.current?.disconnect();
-  }, [selectedModel]);
+      socketRef.current.on('error', (error) => {
+        console.error('Socket error:', error);
+        setLoading(false);
+        alert('Error connecting to server: ' + error);
+      });
 
-  // Scroll to bottom
+      return () => {
+        if (socketRef.current) {
+          socketRef.current.disconnect();
+        }
+      };
+    }
+  }, [userId, selectedModel]);
+
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
 
-  // Load conversations on mount
-  useEffect(() => {
-    const storedUserId = localStorage.getItem('userId');
-    if (storedUserId) {
-      setUserId(storedUserId);
-      createNewConversation(storedUserId);
+  const handleSignup = async (e) => {
+    e.preventDefault();
+    
+    if (!name.trim() || !email.trim() || !password.trim()) {
+      alert('Please fill in all fields');
+      return;
     }
-  }, []);
+
+    try {
+      setLoading(true);
+      const response = await axios.post(`${BACKEND_URL}/api/auth/signup`, {
+        name, 
+        email, 
+        password
+      });
+      
+      setUserId(response.data.user._id);
+      createNewConversation(response.data.user._id);
+      setLoading(false);
+    } catch (error) {
+      console.error('Signup error:', error);
+      setLoading(false);
+      alert('Signup failed: ' + (error.response?.data?.error || error.message));
+    }
+  };
 
   const createNewConversation = async (uid) => {
     try {
-      const response = await axios.post('http://localhost:5000/api/conversations', {
+      const response = await axios.post(`${BACKEND_URL}/api/conversations`, {
         userId: uid,
         title: `Chat - ${new Date().toLocaleString()}`
       });
       setConversationId(response.data._id);
-      socketRef.current?.emit('join_conversation', { conversationId: response.data._id });
       setMessages([]);
+      
+      setTimeout(() => {
+        if (socketRef.current) {
+          socketRef.current.emit('join_conversation', { conversationId: response.data._id });
+        }
+      }, 1000);
     } catch (error) {
       console.error('Error creating conversation:', error);
+      alert('Error creating chat: ' + error.message);
     }
   };
 
   const handleSendMessage = (e) => {
     e.preventDefault();
-    if (!input.trim() || !conversationId) return;
+    
+    if (!input.trim() || !conversationId) {
+      alert('Please type a message');
+      return;
+    }
 
-    // Add user message to UI immediately
+    if (!socketRef.current || !socketRef.current.connected) {
+      alert('Not connected to server. Please refresh page.');
+      return;
+    }
+
     setMessages(prev => [...prev, { role: 'user', content: input, id: Date.now() }]);
     
-    // Send via socket
-    socketRef.current?.emit('send_message', {
+    socketRef.current.emit('send_message', {
       conversationId,
       message: input,
       model: selectedModel
@@ -80,48 +129,82 @@ const ChatApp = () => {
     setLoading(true);
   };
 
-  const handleSignup = async (email, password, name) => {
-    try {
-      const response = await axios.post('http://localhost:5000/api/auth/signup', {
-        email, password, name
-      });
-      localStorage.setItem('userId', response.data.user._id);
-      setUserId(response.data.user._id);
-      createNewConversation(response.data.user._id);
-    } catch (error) {
-      console.error('Signup error:', error);
-    }
-  };
-
   if (!userId) {
-    return <AuthForm onSignup={handleSignup} />;
+    return (
+      <div className="flex items-center justify-center h-screen bg-gradient-to-br from-slate-900 to-slate-800">
+        <form onSubmit={handleSignup} className="w-full max-w-md p-8 bg-slate-800 rounded-lg shadow-xl border border-slate-700">
+          <h1 className="text-3xl font-bold text-white mb-8 text-center">🤖 MantraAI</h1>
+          
+          <input
+            type="text"
+            placeholder="Name"
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            className="w-full px-4 py-3 mb-4 bg-slate-700 text-white rounded-lg border border-slate-600 focus:outline-none focus:ring-2 focus:ring-blue-500 placeholder-slate-400"
+            required
+            disabled={loading}
+          />
+          
+          <input
+            type="email"
+            placeholder="Email"
+            value={email}
+            onChange={(e) => setEmail(e.target.value)}
+            className="w-full px-4 py-3 mb-4 bg-slate-700 text-white rounded-lg border border-slate-600 focus:outline-none focus:ring-2 focus:ring-blue-500 placeholder-slate-400"
+            required
+            disabled={loading}
+          />
+          
+          <input
+            type="password"
+            placeholder="Password"
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+            className="w-full px-4 py-3 mb-6 bg-slate-700 text-white rounded-lg border border-slate-600 focus:outline-none focus:ring-2 focus:ring-blue-500 placeholder-slate-400"
+            required
+            disabled={loading}
+          />
+          
+          <button
+            type="submit"
+            disabled={loading}
+            className="w-full py-3 bg-gradient-to-r from-blue-600 to-blue-500 text-white rounded-lg hover:from-blue-700 hover:to-blue-600 font-semibold transition shadow-md disabled:opacity-50"
+          >
+            {loading ? 'Loading...' : 'Sign Up & Chat'}
+          </button>
+        </form>
+      </div>
+    );
   }
 
   return (
     <div className="flex flex-col h-screen bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900">
-      {/* Header */}
       <div className="bg-slate-800 border-b border-slate-700 p-4 flex justify-between items-center shadow-lg">
         <div className="flex items-center gap-3">
           <div className="w-10 h-10 bg-gradient-to-br from-blue-500 to-purple-500 rounded-lg flex items-center justify-center">
-            <span className="text-white font-bold">AI</span>
+            <span className="text-white font-bold">MA</span>
           </div>
-          <h1 className="text-2xl font-bold text-white">ChatBot</h1>
+          <h1 className="text-2xl font-bold text-white">MantraAI</h1>
         </div>
         
         <select
           value={selectedModel}
           onChange={(e) => setSelectedModel(e.target.value)}
           className="px-4 py-2 bg-slate-700 text-white rounded-lg border border-slate-600 focus:outline-none focus:ring-2 focus:ring-blue-500 cursor-pointer hover:bg-slate-600 transition"
+          disabled={loading}
         >
           <option value="gpt4">🟢 GPT-4</option>
-  <option value="gemini">🟡 Gemini</option>
-<option value="cohere">🔴 Cohere</option>
+          <option value="gemini">🟡 Gemini</option>
+          <option value="cohere">🔴 Cohere</option>
         </select>
 
         <button
           onClick={() => {
-            localStorage.removeItem('userId');
             setUserId(null);
+            setMessages([]);
+            setName('');
+            setEmail('');
+            setPassword('');
           }}
           className="px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition"
         >
@@ -129,20 +212,19 @@ const ChatApp = () => {
         </button>
       </div>
 
-      {/* Messages Container */}
       <div className="flex-1 overflow-y-auto p-6 space-y-4 bg-slate-900">
         {messages.length === 0 && (
           <div className="flex flex-col items-center justify-center h-full text-center">
             <div className="text-6xl mb-4">💬</div>
-            <h2 className="text-3xl font-bold text-white mb-2">Welcome to AI Chat</h2>
-            <p className="text-slate-400 text-lg">Start a conversation with {selectedModel}</p>
+            <h2 className="text-3xl font-bold text-white mb-2">Welcome to MantraAI</h2>
+            <p className="text-slate-400 text-lg">Start a conversation with {selectedModel === 'gpt4' ? 'GPT-4' : selectedModel === 'gemini' ? 'Gemini' : 'Cohere'}</p>
           </div>
         )}
 
         {messages.map((msg, idx) => (
           <div
             key={msg.id}
-            className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'} animate-fadeIn`}
+            className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}
           >
             <div
               className={`max-w-md lg:max-w-xl px-6 py-3 rounded-lg shadow-md transition-all hover:shadow-lg ${
@@ -170,7 +252,6 @@ const ChatApp = () => {
         <div ref={messagesEndRef} />
       </div>
 
-      {/* Input Area */}
       <div className="border-t border-slate-700 p-4 bg-slate-800">
         <form onSubmit={handleSendMessage} className="flex gap-3">
           <input
@@ -193,7 +274,8 @@ const ChatApp = () => {
           <button
             type="button"
             onClick={() => createNewConversation(userId)}
-            className="px-4 py-3 bg-slate-700 text-white rounded-lg hover:bg-slate-600 transition"
+            disabled={loading}
+            className="px-4 py-3 bg-slate-700 text-white rounded-lg hover:bg-slate-600 transition disabled:opacity-50"
           >
             ➕
           </button>
@@ -202,56 +284,3 @@ const ChatApp = () => {
     </div>
   );
 };
-
-// Auth Form Component
-const AuthForm = ({ onSignup }) => {
-  const [email, setEmail] = useState('');
-  const [password, setPassword] = useState('');
-  const [name, setName] = useState('');
-
-  const handleSubmit = (e) => {
-    e.preventDefault();
-    onSignup(email, password, name);
-  };
-
-  return (
-    <div className="flex items-center justify-center h-screen bg-gradient-to-br from-slate-900 to-slate-800">
-      <form onSubmit={handleSubmit} className="w-full max-w-md p-8 bg-slate-800 rounded-lg shadow-xl border border-slate-700">
-        <h1 className="text-3xl font-bold text-white mb-8 text-center">🤖 AI Chat</h1>
-        
-        <input
-          type="text"
-          placeholder="Name"
-          value={name}
-          onChange={(e) => setName(e.target.value)}
-          className="w-full px-4 py-3 mb-4 bg-slate-700 text-white rounded-lg border border-slate-600 focus:outline-none focus:ring-2 focus:ring-blue-500 placeholder-slate-400"
-        />
-        
-        <input
-          type="email"
-          placeholder="Email"
-          value={email}
-          onChange={(e) => setEmail(e.target.value)}
-          className="w-full px-4 py-3 mb-4 bg-slate-700 text-white rounded-lg border border-slate-600 focus:outline-none focus:ring-2 focus:ring-blue-500 placeholder-slate-400"
-        />
-        
-        <input
-          type="password"
-          placeholder="Password"
-          value={password}
-          onChange={(e) => setPassword(e.target.value)}
-          className="w-full px-4 py-3 mb-6 bg-slate-700 text-white rounded-lg border border-slate-600 focus:outline-none focus:ring-2 focus:ring-blue-500 placeholder-slate-400"
-        />
-        
-        <button
-          type="submit"
-          className="w-full py-3 bg-gradient-to-r from-blue-600 to-blue-500 text-white rounded-lg hover:from-blue-700 hover:to-blue-600 font-semibold transition shadow-md"
-        >
-          Sign Up & Chat
-        </button>
-      </form>
-    </div>
-  );
-};
-
-export default ChatApp;
